@@ -82,7 +82,6 @@ module simple_spi #(
   input wire 		we_i, // write enable
   input wire [3:0] 	sel_i, // select input
   input wire [31:0] 	dat_i, // data input
-  output reg [3:0]      sel_o, // select output
   output reg [31:0] 	dat_o, // data output
   output reg 		ack_o, // normal bus termination
   output reg 		inta_o, // interrupt output
