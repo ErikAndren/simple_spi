@@ -74,22 +74,24 @@ module simple_spi #(
   parameter SS_WIDTH = 1
 )(
   // 8bit WISHBONE bus slave interface
-  input  wire       clk_i,         // clock
-  input  wire       rst_i,         // reset (synchronous active high)
-  input  wire       cyc_i,         // cycle
-  input  wire       stb_i,         // strobe
-  input  wire [2:0] adr_i,         // address
-  input  wire       we_i,          // write enable
-  input  wire [7:0] dat_i,         // data input
-  output reg  [7:0] dat_o,         // data output
-  output reg        ack_o,         // normal bus termination
-  output reg        inta_o,        // interrupt output
+  input wire 		clk_i, // clock
+  input wire 		rst_i, // reset (synchronous active high)
+  input wire 		cyc_i, // cycle
+  input wire 		stb_i, // strobe
+  input wire [2:0] 	adr_i, // address
+  input wire 		we_i, // write enable
+  input wire [3:0] 	sel_i, // select input
+  input wire [31:0] 	dat_i, // data input
+  output reg [3:0]      sel_o, // select output
+  output reg [31:0] 	dat_o, // data output
+  output reg 		ack_o, // normal bus termination
+  output reg 		inta_o, // interrupt output
 
   // SPI port
-  output reg        sck_o,         // serial clock output
-  output [SS_WIDTH-1:0] ss_o,      // slave select (active low)
-  output wire       mosi_o,        // MasterOut SlaveIN
-  input  wire       miso_i         // MasterIn SlaveOut
+  output reg 		sck_o, // serial clock output
+  output [SS_WIDTH-1:0] ss_o, // slave select (active low)
+  output wire 		mosi_o, // MasterOut SlaveIN
+  input wire 		miso_i         // MasterIn SlaveOut
 );
 
   //
