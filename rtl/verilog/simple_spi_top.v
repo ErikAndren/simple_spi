@@ -130,36 +130,41 @@ module simple_spi #(
       end
     else if (wb_wr)
       begin
-        if (adr_i == 3'b000)
-          spcr <= dat_i | 8'h10; // always set master bit
+        if (adr_i == 3'b000 && sel_i == 4'b1000)
+          spcr <= dat_i[31:24] | 8'h10; // always set master bit
 
-        if (adr_i == 3'b011)
-          sper <= dat_i;
+        if (adr_i == 3'b000 && sel_i == 4'b0001)
+          sper <= dat_i[7:0];
 
-		if (adr_i == 3'b100)
-          ss_r <= dat_i[SS_WIDTH-1:0];
+	 if (adr_i == 3'b100 && sel_i == 4'b1000)
+          ss_r <= dat_i[SS_WIDTH+24-1:24];
       end
 
   // slave select (active low)
   assign ss_o = ~ss_r;
 
   // write fifo
-  assign wfwe = wb_acc & (adr_i == 3'b010) & ack_o &  we_i;
+  assign wfwe = wb_acc & (adr_i == 3'b000) & (sel_i == 4'b0010) & ack_o & we_i;
   assign wfov = wfwe & wffull;
 
   // dat_o
   always @(posedge clk_i)
-    case(adr_i) // synopsys full_case parallel_case
-       3'b000: dat_o <= spcr;
-       3'b001: dat_o <= spsr;
-       3'b010: dat_o <= rfdout;
-       3'b011: dat_o <= sper;
-       3'b100: dat_o <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
-      default: dat_o <= 0;
-    endcase
+    if (adr_i == 3'b000)
+      begin
+	 case(sel_i) // synopsys full_case parallel_case
+	   4'b1000: dat_o[31:24] <= spcr;
+	   4'b0100: dat_o[23:16] <= spsr;
+	   4'b0010: dat_o[15:8] <= rfdout;
+	   4'b0001: dat_o[7:0] <= sper;
+	   default: dat_o <= 0;
+	 endcase // case (sel_i)
+      end else if (adr_i == 3'b100) 
+      begin
+	 dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
+      end
 
   // read fifo
-  assign rfre = wb_acc & (adr_i == 3'b010) & ack_o & ~we_i;
+  assign rfre = wb_acc & (adr_i == 3'b000) & (sel_i == 4'b0010) & ack_o & ~we_i;
 
   // ack_o
   always @(posedge clk_i)
@@ -184,21 +189,21 @@ module simple_spi #(
   wire [3:0] espr = {spre, spr};
 
   // generate status register
-  wire wr_spsr = wb_wr & (adr_i == 3'b001);
+  wire wr_spsr = wb_wr & (adr_i == 3'b000) & (sel_i == 4'b0100);
 
   reg spif;
   always @(posedge clk_i)
     if (~spe | rst_i)
       spif <= 1'b0;
     else
-      spif <= (tirq | spif) & ~(wr_spsr & dat_i[7]);
+      spif <= (tirq | spif) & ~(wr_spsr & dat_i[31]);
 
   reg wcol;
   always @(posedge clk_i)
     if (~spe | rst_i)
       wcol <= 1'b0;
     else
-      wcol <= (wfov | wcol) & ~(wr_spsr & dat_i[6]);
+      wcol <= (wfov | wcol) & ~(wr_spsr & dat_i[30]);
 
   assign spsr[7]   = spif;
   assign spsr[6]   = wcol;
@@ -231,7 +236,7 @@ module simple_spi #(
 	.clk   ( clk_i   ),
 	.rst   ( ~rst_i  ),
 	.clr   ( ~spe    ),
-	.din   ( dat_i   ),
+	.din   ( dat_i[15:8]),
 	.we    ( wfwe    ),
 	.dout  ( wfdout  ),
 	.re    ( wfre    ),
