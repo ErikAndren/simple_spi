@@ -78,7 +78,7 @@ module simple_spi #(
   input wire 		rst_i, // reset (synchronous active high)
   input wire 		cyc_i, // cycle
   input wire 		stb_i, // strobe
-  input wire [2:0] 	adr_i, // address
+  input wire [3:0] 	adr_i, // address
   input wire 		we_i, // write enable
   input wire [3:0] 	sel_i, // select input
   input wire [31:0] 	dat_i, // data input
@@ -115,6 +115,10 @@ module simple_spi #(
   reg [1:0] state;    // statemachine state
   reg [2:0] bcnt;
 
+  reg [31:0] burst_wr;
+  reg [3:0] burst_wr_slices;
+  wire     bur_write;
+      
   //
   // Wishbone interface
   wire wb_acc = cyc_i & stb_i;       // WISHBONE access
@@ -127,29 +131,44 @@ module simple_spi #(
           spcr <= 8'h10;  // set master bit
           sper <= 8'h00;
           ss_r <= 0;
+       	  burst_wr_slices <= 0;
+	 
       end
     else if (wb_wr)
       begin
-        if (adr_i == 3'b000 && sel_i == 4'b1000)
+        if (adr_i == 4'b0000 && sel_i == 4'b1000)
           spcr <= dat_i[31:24] | 8'h10; // always set master bit
 
-        if (adr_i == 3'b000 && sel_i == 4'b0001)
+        if (adr_i == 4'b0000 && sel_i == 4'b0001)
           sper <= dat_i[7:0];
 
-	 if (adr_i == 3'b100 && sel_i == 4'b1000)
+	 if (adr_i == 4'b1000 && sel_i == 4'b1000)
           ss_r <= dat_i[SS_WIDTH+24-1:24];
-      end
+
+	 if (adr_i == 4'b1000) begin
+	   burst_wr        <= dat_i;
+	   burst_wr_slices <= sel_i;
+	 end
+      end // if (wb_wr)
+   else if (burst_wr_slices[3] == 1'b1)
+     begin
+      burst_wr_slices <= burst_wr_slices << 1;
+      burst_wr <= burst_wr << 8;
+     end
+      
 
   // slave select (active low)
   assign ss_o = ~ss_r;
 
+  assign bur_write = (burst_wr_slices[3] == 1'b1);
+   
   // write fifo
-  assign wfwe = wb_acc & (adr_i == 3'b000) & (sel_i == 4'b0010) & ack_o & we_i;
+    assign wfwe = (wb_acc & (adr_i == 4'b0000) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
   assign wfov = wfwe & wffull;
 
   // dat_o
   always @(posedge clk_i)
-    if (adr_i == 3'b000)
+    if (adr_i == 4'b0000)
       begin
 	 case(sel_i) // synopsys full_case parallel_case
 	   4'b1000: dat_o[31:24] <= spcr;
@@ -158,13 +177,13 @@ module simple_spi #(
 	   4'b0001: dat_o[7:0] <= sper;
 	   default: dat_o <= 0;
 	 endcase // case (sel_i)
-      end else if (adr_i == 3'b100) 
+      end else if (adr_i == 4'b0100) 
       begin
 	 dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
       end
 
   // read fifo
-  assign rfre = wb_acc & (adr_i == 3'b000) & (sel_i == 4'b0010) & ack_o & ~we_i;
+  assign rfre = wb_acc & (adr_i == 4'b0000) & (sel_i == 4'b0010) & ack_o & ~we_i;
 
   // ack_o
   always @(posedge clk_i)
@@ -189,7 +208,7 @@ module simple_spi #(
   wire [3:0] espr = {spre, spr};
 
   // generate status register
-  wire wr_spsr = wb_wr & (adr_i == 3'b000) & (sel_i == 4'b0100);
+  wire wr_spsr = wb_wr & (adr_i == 4'b0000) & (sel_i == 4'b0100);
 
   reg spif;
   always @(posedge clk_i)
@@ -213,7 +232,17 @@ module simple_spi #(
   assign spsr[1]   = rffull;
   assign spsr[0]   = rfempty;
   
+  reg [7:0] wfifo_din;
 
+  /* Endianness??? */
+  always @(dat_i or bur_write or burst_wr[31:24])
+    begin
+       if (bur_write == 1'b1)
+	 wfifo_din = burst_wr[31:24];
+       else
+	 wfifo_din = dat_i[15:8];
+    end
+   
   // generate IRQ output (inta_o)
   always @(posedge clk_i)
     inta_o <= spif & spie;
@@ -236,7 +265,7 @@ module simple_spi #(
 	.clk   ( clk_i   ),
 	.rst   ( ~rst_i  ),
 	.clr   ( ~spe    ),
-	.din   ( dat_i[15:8]),
+	.din   ( wfifo_din),
 	.we    ( wfwe    ),
 	.dout  ( wfdout  ),
 	.re    ( wfre    ),
