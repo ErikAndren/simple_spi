@@ -136,16 +136,16 @@ module simple_spi #(
       end
     else if (wb_wr)
       begin
-        if (adr_i == 4'b0000 && sel_i == 4'b1000)
+        if (adr_i[3:2] == 4'b00 && sel_i == 4'b1000)
           spcr <= dat_i[31:24] | 8'h10; // always set master bit
 
-        if (adr_i == 4'b0000 && sel_i == 4'b0001)
+        if (adr_i[3:2] == 4'b00 && sel_i == 4'b0001)
           sper <= dat_i[7:0];
 
-	 if (adr_i == 4'b1000 && sel_i == 4'b1000)
+	 if (adr_i[3:2] == 4'b10 && sel_i == 4'b1000)
           ss_r <= dat_i[SS_WIDTH+24-1:24];
 
-	 if (adr_i == 4'b1000) begin
+	 if (adr_i == 4'b1000 && sel_i == 4'b1111) begin
 	   burst_wr        <= dat_i;
 	   burst_wr_slices <= sel_i;
 	 end
@@ -163,27 +163,27 @@ module simple_spi #(
   assign bur_write = (burst_wr_slices[3] == 1'b1);
    
   // write fifo
-    assign wfwe = (wb_acc & (adr_i == 4'b0000) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
+    assign wfwe = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
   assign wfov = wfwe & wffull;
 
   // dat_o
   always @(posedge clk_i)
-    if (adr_i == 4'b0000)
+    if (adr_i[3:2] == 4'b00)
       begin
 	 case(sel_i) // synopsys full_case parallel_case
 	   4'b1000: dat_o[31:24] <= spcr;
 	   4'b0100: dat_o[23:16] <= spsr;
-	   4'b0010: dat_o[15:8] <= rfdout;
-	   4'b0001: dat_o[7:0] <= sper;
+	   4'b0010: dat_o[15:8]  <= rfdout;
+	   4'b0001: dat_o[7:0]   <= sper;
 	   default: dat_o <= 0;
 	 endcase // case (sel_i)
-      end else if (adr_i == 4'b0100) 
+      end else if ((adr_i[3:2] == 4'b01) && (sel_i == 4'b1000)) 
       begin
 	 dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
       end
 
   // read fifo
-  assign rfre = wb_acc & (adr_i == 4'b0000) & (sel_i == 4'b0010) & ack_o & ~we_i;
+  assign rfre = wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & ~we_i;
 
   // ack_o
   always @(posedge clk_i)
@@ -208,7 +208,7 @@ module simple_spi #(
   wire [3:0] espr = {spre, spr};
 
   // generate status register
-  wire wr_spsr = wb_wr & (adr_i == 4'b0000) & (sel_i == 4'b0100);
+  wire wr_spsr = wb_wr & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0100);
 
   reg spif;
   always @(posedge clk_i)
@@ -234,7 +234,6 @@ module simple_spi #(
   
   reg [7:0] wfifo_din;
 
-  /* Endianness??? */
   always @(dat_i or bur_write or burst_wr[31:24])
     begin
        if (bur_write == 1'b1)
