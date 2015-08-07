@@ -142,7 +142,7 @@ module simple_spi #(
         if (adr_i[3:2] == 4'b00 && sel_i == 4'b0001)
           sper <= dat_i[7:0];
 
-	 if (adr_i[3:2] == 4'b10 && sel_i == 4'b1000)
+	 if (adr_i[3:2] == 4'b01 && sel_i == 4'b1000)
           ss_r <= dat_i[SS_WIDTH+24-1:24];
 
 	 if (adr_i == 4'b1000 && sel_i == 4'b1111) begin
@@ -156,14 +156,13 @@ module simple_spi #(
       burst_wr <= burst_wr << 8;
      end
       
-
   // slave select (active low)
   assign ss_o = ~ss_r;
 
   assign bur_write = (burst_wr_slices[3] == 1'b1);
    
   // write fifo
-    assign wfwe = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
+  assign wfwe = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
   assign wfov = wfwe & wffull;
 
   // dat_o
@@ -215,14 +214,14 @@ module simple_spi #(
     if (~spe | rst_i)
       spif <= 1'b0;
     else
-      spif <= (tirq | spif) & ~(wr_spsr & dat_i[31]);
+      spif <= (tirq | spif) & ~(wr_spsr & dat_i[23]);
 
   reg wcol;
   always @(posedge clk_i)
     if (~spe | rst_i)
       wcol <= 1'b0;
     else
-      wcol <= (wfov | wcol) & ~(wr_spsr & dat_i[30]);
+      wcol <= (wfov | wcol) & ~(wr_spsr & dat_i[22]);
 
   assign spsr[7]   = spif;
   assign spsr[6]   = wcol;
