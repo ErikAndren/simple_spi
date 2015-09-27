@@ -57,21 +57,22 @@
 //               Initial release
 //
 //
-
-
-
 //
 // Motorola MC68HC11E based SPI interface
 //
 // Currently only MASTER mode is supported
 //
-
+   
+	   
 // synopsys translate_off
 `include "timescale.v"
 // synopsys translate_on
 
 module simple_spi #(
-  parameter SS_WIDTH = 1
+		    parameter SS_WIDTH = 1,
+		    parameter OCSPI_REG_BURST_WR = 4'h8,
+		    parameter OCSPI_REG_BURST_RD = 4'h9,		    
+		    parameter FIFO_SIZE = 4
 )(
   // 8bit WISHBONE bus slave interface
   input wire 		clk_i, // clock
@@ -93,6 +94,56 @@ module simple_spi #(
   input wire 		miso_i         // MasterIn SlaveOut
 );
 
+   // Prefetch must handle different scenarios:
+   // Prefetching of one byte:
+   // Inc fill level by one
+   // Place new data on proper place
+   localparam PREFETCH_ONLY = 4'd1;
+   
+   // Prefetch plus ordinary read:
+   // Shift rfdout 8 bits
+   // Place new data on proper position as a function of current fill level
+   localparam PREFETCH_AND_READ = 4'd2;
+
+   // Prefetch plus batch read
+   // Put new data on first position, set fill level to 1
+   localparam PREFETCH_AND_BATCH_READ = 4'd3;
+
+   // Ordinary read:
+   // Decrement fill level, shift data 8 bits
+   localparam READ_ONLY = 4'd4;
+
+   // batch read:
+   // Clear fill level
+   localparam BATCH_READ_ONLY = 4'd5;
+   
+   function integer log2;
+      input integer 	x;
+      integer 		tmp;
+      integer 		res;
+      begin
+	 tmp = x;
+	 res = 0;
+	 while (tmp > 1)
+	   begin
+	      res = res + 1;
+	      tmp = tmp / 2;
+	   end
+	 log2 = res;
+      end
+   endfunction
+
+   function integer bits;
+      input integer x; 
+      begin
+	 if (x > 1) begin
+	    bits = log2(x-1)+1;
+	 end else begin
+	    bits = 1;
+	 end
+      end
+   endfunction
+   
   //
   // Module body
   //
@@ -105,9 +156,17 @@ module simple_spi #(
   // fifo signals
   wire [7:0] rfdout;
   reg        wfre, rfwe;
-  wire       rfre, rffull, rfempty;
+  reg 	     rfre;
+  wire       rffull, rfempty;
   wire [7:0] wfdout;
   wire       wfwe, wffull, wfempty;
+
+
+  localparam FIFO_SIZE_BITS = bits(FIFO_SIZE);
+   
+ 
+  reg [FIFO_SIZE_BITS:0] rfdout_pref_fill_lvl; 
+  reg [31:0] rfdout_pref;
 
   // misc signals
   wire      tirq;     // transfer interrupt (selected number of transfers done)
@@ -145,7 +204,7 @@ module simple_spi #(
 	 if (adr_i[3:2] == 4'b01 && sel_i == 4'b1000)
           ss_r <= dat_i[SS_WIDTH+24-1:24];
 
-	 if (adr_i == 4'b1000 && sel_i == 4'b1111) begin
+	 if (adr_i == OCSPI_REG_BURST_WR && sel_i == 4'b1111) begin
 	   burst_wr        <= dat_i;
 	   burst_wr_slices <= sel_i;
 	 end
@@ -166,23 +225,113 @@ module simple_spi #(
   assign wfov = wfwe & wffull;
 
   // dat_o
-  always @(posedge clk_i)
-    if (adr_i[3:2] == 4'b00)
-      begin
-	 case(sel_i) // synopsys full_case parallel_case
-	   4'b1000: dat_o[31:24] <= spcr;
-	   4'b0100: dat_o[23:16] <= spsr;
-	   4'b0010: dat_o[15:8]  <= rfdout;
-	   4'b0001: dat_o[7:0]   <= sper;
-	   default: dat_o <= 0;
-	 endcase // case (sel_i)
-      end else if ((adr_i[3:2] == 4'b01) && (sel_i == 4'b1000)) 
-      begin
-	 dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
-      end
+   always @(posedge clk_i)
+     if (adr_i[3:2] == 4'b00)
+       begin
+	  case(sel_i)
+	    4'b1000: dat_o[31:24] <= spcr;
+	    4'b0100: dat_o[23:16] <= spsr;
+	    4'b0010: dat_o[15:8]  <= rfdout_pref[7:0];
+	    4'b0001: dat_o[7:0]   <= sper;
+	    default: dat_o <= 0;
+	  endcase // case (sel_i)
+       end 
+     else if ((adr_i[3:2] == 4'b01) && (sel_i == 4'b1000)) 
+       begin
+	  dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
+       end
+     else if ((adr_i == OCSPI_REG_BURST_RD) && (sel_i == 4'b1111))
+       begin
+	  dat_o <= rfdout_pref;	  
+       end
+   
+   
+   reg [3:0] prefetch_action;
+   wire       wb_fifo_read = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & ~we_i);
+   wire       wb_fifo_batch_read = (wb_acc & (adr_i == OCSPI_REG_BURST_RD) & (sel_i == 4'b1111) & ack_o & ~we_i);
+   
+  always @(rfempty, wb_acc, wb_fifo_read, wb_fifo_batch_read, rfdout_pref_fill_lvl)
+    begin
+       prefetch_action = 0;
+       rfre = 1'b0;
 
-  // read fifo
-  assign rfre = wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & ~we_i;
+       if ((!rfempty & wb_fifo_read) && rfdout_pref_fill_lvl > 0)
+	 begin
+	    prefetch_action = PREFETCH_AND_READ;
+	    rfre = 1'b1;
+	 end
+       if ((!rfempty & wb_fifo_batch_read) && rfdout_pref_fill_lvl == 4)
+	 begin
+	    prefetch_action = PREFETCH_AND_BATCH_READ;
+	    rfre = 1'b1;
+	 end
+       else if (wb_fifo_read && rfdout_pref_fill_lvl > 0)
+	 prefetch_action = READ_ONLY;
+       else if (wb_fifo_batch_read && rfdout_pref_fill_lvl == 4)
+	 prefetch_action = BATCH_READ_ONLY;
+       else if (!rfempty && rfdout_pref_fill_lvl < 4)
+	 begin
+	    prefetch_action = PREFETCH_ONLY;
+	    rfre = 1'b1;
+	 end
+    end
+
+   // rfdout_pref
+   always @(posedge clk_i or posedge rst_i)
+     if (rst_i)
+       begin
+	  rfdout_pref <= 0;
+	  rfdout_pref_fill_lvl <= 0;
+       end
+     else
+       begin
+	  case (prefetch_action)
+	    READ_ONLY:
+	      begin
+	       rfdout_pref_fill_lvl <= rfdout_pref_fill_lvl - 1;
+	       rfdout_pref <= rfdout_pref >> 8;
+	      end
+
+	    PREFETCH_ONLY:
+	      begin
+		 case (rfdout_pref_fill_lvl)
+		   0: rfdout_pref[8-1 :   0] <= rfdout;
+		   1: rfdout_pref[16-1 :  8] <= rfdout;
+		   2: rfdout_pref[24-1 : 16] <= rfdout;
+		   3: rfdout_pref[32-1 : 24] <= rfdout;
+		   default: $display("Error: Prefetching when full!");
+		 endcase
+		 
+		 rfdout_pref_fill_lvl <= rfdout_pref_fill_lvl + 1;
+	      end
+	    
+	    PREFETCH_AND_READ:
+	      begin
+		 rfdout_pref <= rfdout_pref >> 8;
+
+		 case (rfdout_pref_fill_lvl)
+		   0: rfdout_pref[8-1 :   0] <= rfdout;
+		   1: rfdout_pref[16-1 :  8] <= rfdout;
+		   2: rfdout_pref[24-1 : 16] <= rfdout;
+		   3: rfdout_pref[32-1 : 24] <= rfdout;
+		   default: $display("Error: Prefetching when full!");
+		 endcase
+	      end
+	    
+	    PREFETCH_AND_BATCH_READ:
+	      begin
+		 rfdout_pref[8-1 : 0] <= rfdout;
+		 rfdout_pref_fill_lvl <= rfdout_pref_fill_lvl - 1;
+	      end
+
+	    BATCH_READ_ONLY:
+	      begin
+		 rfdout_pref_fill_lvl <= 0;
+	      end
+
+	    default: $display("Illegal state");
+	  endcase
+       end
 
   // ack_o
   always @(posedge clk_i)
