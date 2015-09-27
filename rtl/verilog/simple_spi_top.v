@@ -62,8 +62,8 @@
 //
 // Currently only MASTER mode is supported
 //
-   
-	   
+
+
 // synopsys translate_off
 `include "timescale.v"
 // synopsys translate_on
@@ -71,7 +71,7 @@
 module simple_spi #(
 		    parameter SS_WIDTH = 1,
 		    parameter OCSPI_REG_BURST_WR = 4'h8,
-		    parameter OCSPI_REG_BURST_RD = 4'h9,		    
+		    parameter OCSPI_REG_BURST_RD = 4'h9,
 		    parameter FIFO_SIZE = 4
 )(
   // 8bit WISHBONE bus slave interface
@@ -99,7 +99,7 @@ module simple_spi #(
    // Inc fill level by one
    // Place new data on proper place
    localparam PREFETCH_ONLY = 4'd1;
-   
+
    // Prefetch plus ordinary read:
    // Shift rfdout 8 bits
    // Place new data on proper position as a function of current fill level
@@ -116,7 +116,7 @@ module simple_spi #(
    // batch read:
    // Clear fill level
    localparam BATCH_READ_ONLY = 4'd5;
-   
+
    function integer log2;
       input integer 	x;
       integer 		tmp;
@@ -134,7 +134,7 @@ module simple_spi #(
    endfunction
 
    function integer bits;
-      input integer x; 
+      input integer x;
       begin
 	 if (x > 1) begin
 	    bits = log2(x-1)+1;
@@ -143,7 +143,7 @@ module simple_spi #(
 	 end
       end
    endfunction
-   
+
   //
   // Module body
   //
@@ -163,9 +163,9 @@ module simple_spi #(
 
 
   localparam FIFO_SIZE_BITS = bits(FIFO_SIZE);
-   
- 
-  reg [FIFO_SIZE_BITS:0] rfdout_pref_fill_lvl; 
+
+
+  reg [FIFO_SIZE_BITS:0] rfdout_pref_fill_lvl;
   reg [31:0] rfdout_pref;
 
   // misc signals
@@ -177,7 +177,7 @@ module simple_spi #(
   reg [31:0] burst_wr;
   reg [3:0] burst_wr_slices;
   wire     bur_write;
-      
+
   //
   // Wishbone interface
   wire wb_acc = cyc_i & stb_i;       // WISHBONE access
@@ -191,7 +191,7 @@ module simple_spi #(
           sper <= 8'h00;
           ss_r <= 0;
        	  burst_wr_slices <= 0;
-	 
+
       end
     else if (wb_wr)
       begin
@@ -214,12 +214,12 @@ module simple_spi #(
       burst_wr_slices <= burst_wr_slices << 1;
       burst_wr <= burst_wr << 8;
      end
-      
+
   // slave select (active low)
   assign ss_o = ~ss_r;
 
   assign bur_write = (burst_wr_slices[3] == 1'b1);
-   
+
   // write fifo
   assign wfwe = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & we_i) || (bur_write == 1'b1 && ack_o == 1'b0);
   assign wfov = wfwe & wffull;
@@ -235,21 +235,21 @@ module simple_spi #(
 	    4'b0001: dat_o[7:0]   <= sper;
 	    default: dat_o <= 0;
 	  endcase // case (sel_i)
-       end 
-     else if ((adr_i[3:2] == 4'b01) && (sel_i == 4'b1000)) 
+       end
+     else if ((adr_i[3:2] == 4'b01) && (sel_i == 4'b1000))
        begin
 	  dat_o[31:24] <= {{ (8-SS_WIDTH){1'b0} }, ss_r};
        end
      else if ((adr_i == OCSPI_REG_BURST_RD) && (sel_i == 4'b1111))
        begin
-	  dat_o <= rfdout_pref;	  
+	  dat_o <= rfdout_pref;
        end
-   
-   
+
+
    reg [3:0] prefetch_action;
    wire       wb_fifo_read = (wb_acc & (adr_i[3:2] == 4'b00) & (sel_i == 4'b0010) & ack_o & ~we_i);
    wire       wb_fifo_batch_read = (wb_acc & (adr_i == OCSPI_REG_BURST_RD) & (sel_i == 4'b1111) & ack_o & ~we_i);
-   
+
   always @(rfempty, wb_acc, wb_fifo_read, wb_fifo_batch_read, rfdout_pref_fill_lvl)
     begin
        prefetch_action = 0;
@@ -301,10 +301,10 @@ module simple_spi #(
 		   3: rfdout_pref[32-1 : 24] <= rfdout;
 		   default: $display("Error: Prefetching when full!");
 		 endcase
-		 
+
 		 rfdout_pref_fill_lvl <= rfdout_pref_fill_lvl + 1;
 	      end
-	    
+
 	    PREFETCH_AND_READ:
 	      begin
 		 rfdout_pref <= rfdout_pref >> 8;
@@ -317,7 +317,7 @@ module simple_spi #(
 		   default: $display("Error: Prefetching when full!");
 		 endcase
 	      end
-	    
+
 	    PREFETCH_AND_BATCH_READ:
 	      begin
 		 rfdout_pref[8-1 : 0] <= rfdout;
@@ -379,7 +379,7 @@ module simple_spi #(
   assign spsr[2]   = wfempty;
   assign spsr[1]   = rffull;
   assign spsr[0]   = rfempty;
-  
+
   reg [7:0] wfifo_din;
 
   always @(dat_i or bur_write or burst_wr[31:24])
@@ -389,7 +389,7 @@ module simple_spi #(
        else
 	 wfifo_din = dat_i[15:8];
     end
-   
+
   // generate IRQ output (inta_o)
   always @(posedge clk_i)
     inta_o <= spif & spie;
@@ -517,4 +517,3 @@ module simple_spi #(
   assign tirq = ~|tcnt & rfwe;
 
 endmodule
-
